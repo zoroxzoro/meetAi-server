@@ -19,6 +19,12 @@ const UserSchema = new mongoose.Schema({
         type: String,
         required: true,
     },
+    image: {
+        type: String,
+    },
+    emailVerified: {
+        type: Date,
+    },
 });
 
 const User = mongoose.model("User", UserSchema);

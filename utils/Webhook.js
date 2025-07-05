@@ -1,59 +1,63 @@
-// webhook.js
 import express from "express";
-import { Webhook } from "svix";
-import User from "../model/User.model.js"; // adjust the path if needed
-import dotenv from "dotenv";
-
-dotenv.config();
+import User from "../model/User.model.js";
 
 const router = express.Router();
 
-router.post("/api/webhooks/clerk", express.json({
-    verify: (req, res, buf) => {
-        req.rawBody = buf;
-    }
-}), async (req, res) => {
-    const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
-
-    if (!WEBHOOK_SECRET) {
-        return res.status(500).send("Missing Clerk webhook secret");
-    }
-
-    const wh = new Webhook(WEBHOOK_SECRET);
-
-    let evt;
+router.post("/webhooks/clerk", express.json(), async (req, res) => {
     try {
-        evt = wh.verify(req.rawBody, req.headers);
-    } catch (err) {
-        console.error("Webhook signature verification failed:", err.message);
-        return res.status(400).send("Invalid webhook signature");
-    }
+        const event = req.body;
 
-    const eventType = evt.type;
-    const data = evt.data;
-
-    console.log(`🔔 Clerk webhook event received: ${eventType}`);
-
-    if (eventType === "user.created") {
-        const { id, email_addresses, first_name, last_name } = data;
-
-        const user = new User({
-            user_id: id,
-            name: `${first_name || ""} ${last_name || ""}`.trim(),
-            email: email_addresses[0]?.email_address || "",
-            password: "clerk", // Placeholder
-        });
-
-        try {
-            await user.save();
-            console.log("✅ New user saved to MongoDB");
-        } catch (err) {
-            console.error("❌ Error saving user:", err.message);
+        if (!event || !event.type || !event.data) {
+            return res.status(400).send("Invalid payload");
         }
-    }
 
-    res.status(200).send("Webhook received");
+        const userData = event.data;
+        const clerkId = userData.id;
+
+        // Extract email
+        const emailObj = userData.email_addresses?.[0];
+        const email = emailObj?.email_address || null;
+
+        // Check if email is verified
+        const emailVerified =
+            emailObj?.verification?.status === "verified" ? new Date() : null;
+
+        // Extract full name
+        const fullName = `${userData.first_name || ""} ${userData.last_name || ""}`.trim();
+
+        // Prefer high-quality image (OAuth) if available
+        const externalImage = userData.external_accounts?.[0]?.picture;
+        const image = externalImage || userData.image_url || userData.profile_image_url;
+
+        const password = "clerk-oauth"; // placeholder
+
+        if (event.type === "user.created" || event.type === "user.updated") {
+            const updatedUser = await User.findOneAndUpdate(
+                { user_id: clerkId },
+                {
+                    user_id: clerkId,
+                    name: fullName,
+                    email,
+                    password,
+                    image,
+                    emailVerified,
+                },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+
+            console.log("✅ User upserted:", updatedUser);
+        }
+
+        if (event.type === "user.deleted") {
+            await User.deleteOne({ user_id: clerkId });
+            console.log("❌ User deleted from DB");
+        }
+
+        res.status(200).json({ received: true });
+    } catch (err) {
+        console.error("❌ Error in webhook handler:", err);
+        res.status(500).send("Internal Server Error");
+    }
 });
 
-// ✅ Export the router
 export default router;
