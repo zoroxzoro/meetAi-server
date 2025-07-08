@@ -25,6 +25,11 @@ const UserSchema = new mongoose.Schema({
     emailVerified: {
         type: Date,
     },
+    agents: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Agent"
+    }]
+
 });
 
 const User = mongoose.model("User", UserSchema);
